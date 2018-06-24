@@ -1,0 +1,70 @@
+box: 
+  id: node:latest
+  ports: 
+    - "8080"
+    
+dev:
+  steps:
+    - npm-install
+    - internal/watch:
+        code: node app.js
+        reload: true
+
+# Build definition
+build:
+  # The steps that will be executed on build
+  steps:
+    - script:
+        code: export NODE_ENV='testing'
+    # A step that executes `npm install` command
+    - npm-install
+    # A step that executes `npm test` command
+    - npm-test
+
+    # A custom script step, name value is used in the UI
+    # and the code value contains the command that get executed
+    - script:
+        name: echo nodejs information
+        code: |
+          echo "node version $(node -v) running"
+          echo "npm version $(npm -v) running"
+    - internal/docker-push:
+        cmd: npm start
+        working-dir: $WERCKER_ROOT
+        tag: $WERCKER_GIT_COMMIT
+        ports: "8080"
+        username: _json_key
+        password: $GCP_KEY_JSON
+        repository: $GCR_TAG
+        registry: $GCR_HOST
+deploy-to-kubernetes:
+    box: python:2.7
+    steps:
+
+    # https://github.com/wercker/step-bash-template
+    # This Wercker step will look for files in our repo with a .template extension.
+    # It will expand any environment variables in those files, then remove the
+    # template extension.
+    - bash-template
+
+    # The step above should leave us with a Kubernetes service and deployment yml files.
+    # We'll create a directory to move them to.
+    - script:
+        name: Prepare Kubernetes files
+        code: |
+          mkdir $WERCKER_OUTPUT_DIR/kubernetes
+          mv kubernetes_*.yml $WERCKER_OUTPUT_DIR/kubernetes
+    # Since we're using GKE, we'll use a fork of the kubectl step that supports
+    # GKE service account authentication. We need to pass some GKE specific configuration
+    # to ensure we can authenticate, then point kubectl at the directory containing our
+    # Kubernetes configuration.
+
+    # `apply` is a good command to use here, as it'll create Kubernetes entities if they are missing.
+    - riceo/kubectl:
+        name: deploy to kubernetes
+        server: $KUBERNETES_MASTER
+        gcloud-key-json: $GCP_KEY_JSON
+        gke-cluster-name: $GKE_CLUSTER_NAME
+        gke-cluster-zone: $GKE_CLUSTER_ZONE
+        gke-cluster-project: $GKE_CLUSTER_PROJECT
+        command: apply -f $WERCKER_OUTPUT_DIR/kubernetes/
